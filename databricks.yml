@@ -17,10 +17,16 @@ variables:
 
 targets:
   dev:
-    # Development mode gives each developer an isolated copy: UC objects become
-    # dev_<user>_mkr_claims, jobs/pipelines get a [dev <user>] prefix, schedules are paused.
-    mode: development
+    # Dedicated dev schema dev_mkr_claims. `mode: development` would force a dev_<user>_ prefix,
+    # so the dev behaviours we want are set explicitly instead.
     default: true
+    variables:
+      schema: dev_mkr_claims
+    presets:
+      trigger_pause_status: PAUSED
+      pipelines_development: true
+      tags:
+        env: dev
     workspace:
       host: https://fevm-serverless-stable-mkr.cloud.databricks.com
 
