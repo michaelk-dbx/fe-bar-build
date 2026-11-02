@@ -1,0 +1,23 @@
+bundle:
+  name: fe-bar-build
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for the build
+    default: serverless_stable_mkr_catalog
+  schema:
+    description: Schema for the build's tables
+    default: fe_bar
+  warehouse_id:
+    description: SQL warehouse for Genie / dashboards
+    default: 22d236430dbb5df0
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://fevm-serverless-stable-mkr.cloud.databricks.com

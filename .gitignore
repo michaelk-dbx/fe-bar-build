@@ -1,0 +1,28 @@
+# Secrets & local config — never commit (the FE Bar submission scan blocks on secrets)
+.env
+.env.*
+*.pem
+*.key
+.databrickscfg
+secrets/
+app.local.yaml
+
+# Databricks
+.databricks/
+.bundle/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Node (app frontend, if any)
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
