@@ -26,3 +26,6 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Generated raw data (regenerate with src/data_gen/generate.py)
+data/

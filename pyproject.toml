@@ -1,0 +1,10 @@
+[project]
+name = "fe-bar-build"
+version = "0.1.0"
+description = "MKR & Co. property claims triage and fraud prevention on Databricks"
+requires-python = ">=3.11"
+dependencies = [
+    "faker>=30",
+    "numpy>=2",
+    "pandas>=2.2",
+]

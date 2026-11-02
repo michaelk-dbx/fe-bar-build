@@ -1,0 +1,18 @@
+resources:
+  schemas:
+    mkr_claims:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: MKR & Co. property claims triage and fraud prevention (synthetic data)
+
+  volumes:
+    landing:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.mkr_claims.name}
+      name: landing
+      comment: Raw landing zone for source-system exports (policy admin, FNOL claims, vendors, weather, SIU)
+    simulation:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.mkr_claims.name}
+      name: simulation
+      comment: Simulation-only ground truth used to measure fraud leakage; never ingested into the claims pipeline
