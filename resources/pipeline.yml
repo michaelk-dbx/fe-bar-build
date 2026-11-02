@@ -1,0 +1,16 @@
+resources:
+  pipelines:
+    mkr_claims_pipeline:
+      name: mkr_claims_pipeline
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.mkr_claims.name}
+      serverless: true
+      photon: true
+      channel: CURRENT
+      libraries:
+        - glob:
+            include: ../src/pipelines/**
+      configuration:
+        landing_path: /Volumes/${var.catalog}/${resources.schemas.mkr_claims.name}/landing
+        pii_mask_fn: ${var.catalog}.${resources.schemas.mkr_claims.name}.mask_pii
+        phone_mask_fn: ${var.catalog}.${resources.schemas.mkr_claims.name}.mask_phone

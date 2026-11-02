@@ -1,0 +1,24 @@
+resources:
+  jobs:
+    mkr_claims_build:
+      name: mkr_claims_build
+      description: End-to-end build of the MKR & Co. claims data products (governance -> Lakeflow pipeline -> tags)
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${resources.schemas.mkr_claims.name}
+      tasks:
+        - task_key: governance_setup
+          notebook_task:
+            notebook_path: ../src/notebooks/00_governance_setup.py
+        - task_key: lakeflow_pipeline
+          depends_on:
+            - task_key: governance_setup
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.mkr_claims_pipeline.id}
+        - task_key: governance_tags
+          depends_on:
+            - task_key: lakeflow_pipeline
+          notebook_task:
+            notebook_path: ../src/notebooks/02_governance_apply.py

@@ -18,6 +18,10 @@ Fraud is planted through known property-fraud patterns so the model has real sig
   narrative        vague story, missing receipts, pressure for a quick cash settlement
 Legitimate claims share some of these traits (noise), so no single rule separates them.
 
+The FNOL feed is also messy the way real feeds are: ~1% of claims are resubmitted
+(fnol_version 2, a few days later, with an updated description), and 15 malformed records
+(missing claim_id, negative amount, reported before the loss) test the pipeline's quality rules.
+
 Usage: uv run python src/data_gen/generate.py --out data/raw
 """
 
@@ -290,6 +294,20 @@ def legacy_siu_outcomes(rng, claims, policies):
     return pd.DataFrame(rows)
 
 
+def add_feed_quality_issues(rng, public):
+    """Resubmissions and malformed records the pipeline must dedupe or quarantine."""
+    public = public.assign(fnol_version=1, submitted_at=public.report_date)
+    resub = public.sample(frac=0.01, random_state=3).copy()
+    resub["fnol_version"] = 2
+    resub["submitted_at"] = [min(d + timedelta(days=int(rng.integers(2, 15))), TODAY) for d in resub.report_date]
+    resub["description"] = resub.description + " Update: photos and contractor estimate received."
+    bad = public.sample(15, random_state=5).copy()
+    bad["claim_id"] = [None] * 5 + [f"CLMERR{i:03d}" for i in range(10)]
+    bad.iloc[5:10, bad.columns.get_loc("claimed_amount")] = -bad.claimed_amount.iloc[5:10]
+    bad.iloc[10:15, bad.columns.get_loc("report_date")] = [d - timedelta(days=5) for d in bad.loss_date.iloc[10:15]]
+    return pd.concat([public, resub, bad]), len(resub), len(bad)
+
+
 def main():
     args = parse_args()
     rng = np.random.default_rng(args.seed)
@@ -321,12 +339,14 @@ def main():
     contractors.to_csv(out / "vendors/contractors.csv", index=False)
     weather.to_csv(out / "weather/weather_events.csv", index=False)
     outcomes.to_csv(out / "siu/claim_outcomes.csv", index=False)
-    public = claims.drop(columns=["is_fraud", "fraud_patterns"])
-    for month, g in public.groupby(public.report_date.map(lambda d: d.strftime("%Y-%m"))):
+    public, n_resub, n_bad = add_feed_quality_issues(rng, claims.drop(columns=["is_fraud", "fraud_patterns"]))
+    for month, g in public.groupby(public.submitted_at.map(lambda d: d.strftime("%Y-%m"))):
         with open(out / f"claims_fnol/claims_{month}.jsonl", "w") as f:
-            for rec in g.to_dict("records"):
-                rec["loss_date"], rec["report_date"] = rec["loss_date"].isoformat(), rec["report_date"].isoformat()
-                rec["contractor_id"] = rec["contractor_id"] or None
+            for rec in g.sort_values("submitted_at").to_dict("records"):
+                for k in ("loss_date", "report_date", "submitted_at"):
+                    rec[k] = rec[k].isoformat()
+                # pandas stores missing values as NaN, which json.dumps writes as the token NaN: emit real nulls
+                rec = {k: None if isinstance(v, float) and np.isnan(v) else v for k, v in rec.items()}
                 f.write(json.dumps(rec) + "\n")
     claims[["claim_id", "is_fraud", "fraud_patterns"]] \
         .assign(contractor_in_ring=claims.contractor_id.isin(ring)) \
@@ -344,6 +364,7 @@ def main():
     print(f"claims (FNOL)          : {len(claims):,} across {claims.report_date.map(lambda d: d.strftime('%Y-%m')).nunique()} monthly files")
     print(f"  fraud (ground truth) : {claims.is_fraud.sum():,} ({claims.is_fraud.mean():.1%})")
     print(f"  open (last {OPEN_WINDOW_DAYS} days)  : {len(claims) - len(closed):,}")
+    print(f"  feed issues          : {n_resub} resubmissions (fnol_version 2), {n_bad} malformed records")
     print(f"  claims by peril      : { {str(k): int(v) for k, v in claims.peril.value_counts().items()} }")
     print(f"fraud patterns planted : { {str(k): int(v) for k, v in pattern_counts.items()} }")
     print("--- legacy SIU process (closed claims) ---")
