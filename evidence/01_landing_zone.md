@@ -1,6 +1,6 @@
 # Step 1 — Synthetic source data landed in Unity Catalog
 
-**What ran:** `uv run python src/data_gen/generate.py --out data/raw` (seed 42, as-of 2026-11-01), then `databricks fs cp` of each source-system folder into the UC volume `serverless_stable_mkr_catalog.mkr_claims.landing`. Ground truth went to the separate `simulation` volume, which the pipeline never reads.
+**What ran:** `uv run python src/data_gen/generate.py --out data/raw` (seed 42, as-of 2026-11-01), then `src/data_gen/land.sh` copied each source-system folder into the UC volume `landing` for both bundle targets: `mkr_claims` (prod) and `dev_michael_krasnopolsky_mkr_claims` (dev). The listing and query below are from **prod**. Ground truth went to the separate `simulation` volume, which the pipeline never reads.
 
 ## Generator output
 ```
@@ -38,7 +38,7 @@ SELECT substr(report_date,1,4) AS report_year, count(*) AS claims,
 FROM read_files('/Volumes/serverless_stable_mkr_catalog/mkr_claims/landing/claims_fnol/', format => 'json')
 GROUP BY 1 ORDER BY 1
 ```
-Statement `01f1d6c1-f71a-107d-bd37-76094dc49ea3` — SUCCEEDED
+Statement `01f1d6c6-d59e-1ec5-9751-7ac3051087f0` — SUCCEEDED
 
 | report_year | claims | claimed_usd | files |
 |---|---|---|---|

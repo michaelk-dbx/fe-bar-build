@@ -23,7 +23,7 @@ Source-system exports → **Lakeflow** (bronze/silver/gold) → **Unity Catalog*
 - **Synthetic data, not a public dataset.** Public insurance fraud datasets are small, auto-only and lack free-text notes or weather. Synthetic data lets us plant realistic property-fraud patterns, and the hidden ground truth lets us measure *leakage*, which a real insurer can't see because undetected fraud is never labeled.
 - **Labels come from SIU outcomes, not ground truth.** The model trains on what MKR & Co. actually knows (confirmed fraud from past SIU investigations), including the bias that only referred claims get investigated. The ground truth is used **only** to evaluate the model, and it lives in a separate volume the pipeline never reads.
 - **Data generated locally, landed as files.** This mirrors how source systems drop exports into a landing zone, so Lakeflow ingests files incrementally the way it would in production.
-- **No `mode: development` in the bundle.** Development mode prefixes Unity Catalog names with `dev_<user>_`; Genie, the app and the docs need stable table names.
+- **Separate dev and prod targets.** `dev` uses bundle development mode, so each developer gets an isolated `dev_<user>_mkr_claims` schema, with prefixed jobs and pipelines and paused schedules. `prod` deploys the unprefixed `mkr_claims` schema that the demo and the committed evidence run on. Everything downstream references the schema through `${resources.schemas.mkr_claims.name}`, so the same code works in both.
 
 ## How AI was used
 - Claude Code (Opus) was used as a pair-programmer for the data generator design, bundle scaffolding and debugging. _(Expanded as the build progresses.)_
@@ -31,7 +31,7 @@ Source-system exports → **Lakeflow** (bronze/silver/gold) → **Unity Catalog*
 ## Repo layout
 | Path | Contents |
 |---|---|
-| `src/data_gen/` | Synthetic source-system generator |
+| `src/data_gen/` | Synthetic source-system generator + `land.sh` to load a target's volumes |
 | `src/pipelines/` | Lakeflow Spark Declarative Pipeline |
 | `src/notebooks/` | ML training, scoring, Lakebase sync |
 | `src/app/` | Databricks App (FastAPI + React) |

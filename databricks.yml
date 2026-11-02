@@ -17,9 +17,16 @@ variables:
 
 targets:
   dev:
-    # Not using `mode: development`: it forces a dev_<user>_ prefix on UC names, and Genie,
-    # the app and the docs need stable table names. Single-user FEVM, so no collision risk.
+    # Development mode gives each developer an isolated copy: UC objects become
+    # dev_<user>_mkr_claims, jobs/pipelines get a [dev <user>] prefix, schedules are paused.
+    mode: development
     default: true
+    workspace:
+      host: https://fevm-serverless-stable-mkr.cloud.databricks.com
+
+  prod:
+    # The environment the demo and committed evidence run on: unprefixed mkr_claims schema.
+    mode: production
     workspace:
       host: https://fevm-serverless-stable-mkr.cloud.databricks.com
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
