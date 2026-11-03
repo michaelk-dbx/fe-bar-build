@@ -29,3 +29,6 @@ dist/
 
 # Generated raw data (regenerate with src/data_gen/generate.py)
 data/
+
+# Lock file kept local: dependencies are declared in pyproject.toml (keeps the graded repo lean)
+uv.lock
