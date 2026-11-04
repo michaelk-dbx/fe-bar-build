@@ -1,0 +1,31 @@
+# Decisions & trade-offs
+
+Why the build is shaped the way it is, grouped by stage. Each item is a choice that had a real alternative.
+
+## Data
+- **Synthetic data, not a public dataset.** Public insurance fraud datasets are small, auto-only and lack free-text notes or weather. Synthetic data lets us plant realistic property-fraud patterns, and the hidden ground truth lets us measure *leakage*, which a real insurer can't see because undetected fraud is never labeled.
+- **Labels come from SIU outcomes, not ground truth.** The model trains on what MKR & Co. actually knows (confirmed fraud from past SIU investigations), including the bias that only referred claims get investigated. The ground truth is used **only** to evaluate the model, and it lives in a separate volume the pipeline never reads.
+- **Data generated locally, landed as files.** This mirrors how source systems drop exports into a landing zone, so Lakeflow ingests files incrementally the way it would in production.
+
+## Lakeflow pipeline
+- **SQL for the pipeline.** Declarative SQL keeps the business logic (e.g. "a hail claim must match a storm in the same ZIP3 within 3 days") readable by claims analysts, not just engineers.
+- **Streaming tables for feeds, materialized views for snapshots.** FNOL claims arrive as new monthly files, so they're ingested incrementally. Policy, contractor and weather exports are full snapshots, so MVs recompute them. In production the policy feed would come through CDC.
+- **Drop and count bad records, rather than failing the pipeline.** One malformed FNOL record shouldn't stop the whole triage queue. Expectations drop it and the event log counts it (5 per rule in this run), so data quality is visible and can be alerted on.
+- **AUTO CDC for resubmissions.** Insurers routinely get updated FNOLs. Keying on `claim_id` and sequencing by `fnol_version` keeps the latest version, without double-counting exposure.
+- **Point-in-time features.** Contractor fraud history and prior claims only count what was known *before* the claim was reported. Otherwise the model would learn from SIU outcomes that didn't exist yet at triage time (target leakage).
+
+## Unity Catalog governance
+- **Govern PII at silver, minimise it.** Email, phone and address are masked by Unity Catalog column masks unless the caller is in the SIU group, so Genie users, analysts and the app see masked values with no extra code. Date of birth is reduced to birth year. In production the `mkr_siu` group would be synced from MKR & Co.'s identity provider so SIU investigators see real values. The demo runs as a user outside that group, so it shows the masked view that analysts, Genie users and the app get. PII columns carry Databricks' built-in `class.*` classification tags, and tables use the metastore's existing governed `medallion_layer` / `contains_pii` tags rather than new ad-hoc keys.
+
+## Fraud model, serving and GenAI
+- **Gradient-boosted trees (scikit-learn `HistGradientBoostingClassifier`), not deep learning or XGBoost.** On ~5k tabular claims it's accurate (test AUC 0.90), handles missing values natively (no coverage increase, no storm check for water claims) and needs no extra libraries on serverless compute.
+- **Time-based split.** Train on claims reported before 2026, test on 2026, the way the model is used. A random split would leak the same contractor rings across train and test and inflate results.
+- **Thresholds tied to today's SIU capacity.** `refer_siu` refers the same share of claims SIU handles now (178 in the 2026 test), so the value comes from *better* referrals (106 real frauds vs 42), not extra investigators. `fast_track` takes the lower half of scores and caps the amount at $25k, so large claims always get a human.
+- **Risk percentile for people, probability for machines.** Trained with class weights on 73 positive labels, the model ranks well but isn't calibrated (the SIU cutoff is P=0.0068). Adjusters and the LLM see a 0–100 `risk_score`; tiers use the raw score.
+- **Deterministic reason codes, not SHAP.** Reason codes state which known indicators fire ("No hail storm recorded in ZIP3 278 within 3 days"). They're auditable and explainable to a policyholder or regulator. The model decides how much they matter.
+- **The LLM explains, it never decides.** `ai_query` writes a neutral triage note (summary, narrative red flags, next step) for open claims only. That keeps cost bounded and is where adjusters need it. Structured output (`responseFormat`) guarantees the schema. Claude endpoints reject it (it needs forced tool use), so a Gemini Flash endpoint is used; the endpoint is a job parameter.
+- **Batch scoring plus a real-time endpoint.** The queue is scored in batch from the UC `champion` model. The `mkr-claims-fraud` endpoint (scale-to-zero) scores new FNOLs from the app. Both use the same model version.
+- **Labels are the bottleneck, so build the feedback loop.** Trained on complete fraud labels, the same model would catch 148 of 190 frauds instead of 106. Writing adjuster and SIU decisions back (Lakebase, step 4) is how MKR & Co. closes that gap.
+
+## Engineering
+- **Separate dev and prod targets, same schema name.** Both targets define the schema as `mkr_claims`. `dev` uses bundle development mode, which adds its default per-user prefix, so dev work lands in an isolated `dev_<user>_mkr_claims` schema with prefixed jobs and pipelines and paused schedules. `prod` deploys the unprefixed `mkr_claims` schema that the demo and the committed evidence run on. Downstream code references the schema through `${resources.schemas.mkr_claims.name}`, so the same code works in both.

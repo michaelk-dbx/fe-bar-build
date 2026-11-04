@@ -1,57 +1,60 @@
 # MKR & Co. — Smart Property Claims Triage & Fraud Prevention
 
-> **Business outcome (draft):** MKR & Co., a fictional US homeowners insurer with 50k policies, pays out about **$10.3M in undetected fraud** over its claims history (about 9.6% of the $107M paid). Its SIU team investigates claims picked by static rules, and only **18.4% of referrals turn out to be fraud**. This build scores every new claim as it arrives, fast-tracks the clean ones, and sends high-risk claims to SIU with a written reason. _Impact figures are filled in after the model is evaluated._
+> **Business outcome:** MKR & Co. (a fictional US homeowners insurer, 50k policies, ~$34M claims paid in 2026 YTD) lets fraud through because its Special Investigations Unit (SIU) works a list picked by static rules: only **23.6%** of referrals are real fraud. This build scores every claim as it arrives. **With the same SIU capacity, it refers 2.5x more real fraud (106 vs 42 frauds, 59.6% precision), cutting fraud paid out by $1.83M in Jan–Oct 2026** (≈$2.2M/yr, ~5% of claims paid). It also **fast-tracks 45% of claims** (fraud rate 1.2%, ≤ $25k) so honest policyholders get paid faster. Every referral comes with plain-English reasons and an AI triage note.
+>
+> _Figures come from the 2026 test period of the [model evaluation](evidence/03_fraud_model_and_genai.md). The data is synthetic, so the hidden ground truth makes leakage measurable._
 
 **Industry Outcome Map:** P&C Insurance → *Claims & Fraud Prevention* (Claims Ingestion, Smart Claims Triage, Claims Analytics, Fraud Models), plus *Dynamic Feedback Loop*.
 
-## The data journey
-Source-system exports → **Lakeflow** (bronze/silver/gold) → **Unity Catalog** (governance, PII masking) → **ML fraud model + LLM red-flag extraction** → **Lakebase** (live triage queue + adjuster decisions) → **Genie** (claims analytics in natural language) → **Databricks App** (FastAPI + React adjuster workbench)
+**Who it's for:** the VP of Claims (loss ratio, fraud leakage, cycle time), SIU leadership (hit rate), and adjusters (a prioritised queue with reasons, not a black-box score).
 
-| Stage | Status |
-|---|---|
-| 1. Synthetic source data landed in UC volume | ✅ [evidence](evidence/01_landing_zone.md) |
-| 2. Lakeflow pipeline + UC governance | ✅ [pipeline](evidence/02_lakeflow_pipeline.md) · [governance](evidence/02b_unity_catalog_governance.md) |
-| 3. Fraud model (MLflow, served) + LLM summaries | ⏳ |
-| 4. Lakebase queue + decision write-back | ⏳ |
-| 5. Genie space | ⏳ |
-| 6. Adjuster app | ⏳ |
+## The data journey
+Source-system exports → **Lakeflow** (bronze/silver/gold) → **Unity Catalog** (governance, PII masking) → **ML fraud model + GenAI triage notes** → **Lakebase** (live triage queue + adjuster decisions) → **Genie** (claims analytics in natural language) → **Databricks App** (FastAPI + React adjuster workbench)
+
+| Stage | What it does | Evidence |
+|---|---|---|
+| 1. Source data | Synthetic policy admin, contractors, weather, FNOL claims and SIU outcomes landed in a UC volume | ✅ [01](evidence/01_landing_zone.md) |
+| 2. Lakeflow + UC | SQL declarative pipeline: Auto Loader, expectations, AUTO CDC dedupe, point-in-time features; PII masks and classification tags | ✅ [02](evidence/02_lakeflow_pipeline.md) · [02b](evidence/02b_unity_catalog_governance.md) |
+| 3. ML + GenAI | Gradient-boosted fraud model in MLflow/UC, serving endpoint, risk tiers + reason codes, `ai_query` triage notes | ✅ [03](evidence/03_fraud_model_and_genai.md) |
+| 4. Lakebase | Triage queue served from Postgres; adjuster decisions written back | ⏳ |
+| 5. Genie | Natural-language claims analytics over the gold tables | ⏳ |
+| 6. App | Adjuster workbench: queue, claim detail, decisions, Genie | ⏳ |
+
+Everything is deployed with one Asset Bundle and runs as one job, `mkr_claims_build`: `governance_setup` → `lakeflow_pipeline` → `train_fraud_model` → (`deploy_serving`, `score_claims`) → `governance_tags`.
+
+## Key tables (`serverless_stable_mkr_catalog.mkr_claims`)
+| Table | Grain | Used by |
+|---|---|---|
+| `gold_claim_features` | claim | model training/scoring, Genie |
+| `gold_claim_scores` | claim | queue: `fraud_score`, `risk_score` (0–100), `risk_tier`, `reason_codes` |
+| `gold_claim_ai_triage` | open claim | LLM summary, narrative red flags, next step |
+| `gold_contractor_risk` | contractor | SIU ring detection, Genie |
+| `gold_claims_kpis_monthly` | month × state × peril | claims leadership, Genie |
 
 ## The data
-`src/data_gen/generate.py` simulates MKR & Co.'s source systems: policy admin (policyholders, policies), vendors (contractors), a NOAA-style weather events feed, first-notice-of-loss (FNOL) claims arriving as monthly JSON files, and legacy SIU outcomes. Six known property-fraud patterns are planted: claims soon after a policy starts or coverage is raised, hail/wind claims with no storm on record, a ring of 14 contractors, inflated amounts, late reporting, and red-flag narratives. Legitimate claims share some of these traits, so no single rule catches the fraud. The FNOL feed is messy on purpose, as real feeds are: about 1% of claims are resubmitted, and 15 records are malformed.
-
-## Lakeflow pipeline (`src/pipelines/`, run by job `mkr_claims_build`)
-| Layer | Tables | What happens |
-|---|---|---|
-| Bronze | `bronze_*` (6 streaming tables) | Auto Loader (`read_files`) ingests each landing folder incrementally, with source file and ingest time |
-| Silver | `silver_claims_validated` → `silver_claims`, `silver_policies`, `silver_policyholders`, `silver_contractors`, `silver_weather_event_areas`, `silver_claim_outcomes` | Typing; expectations drop malformed claims (counted in the event log); AUTO CDC collapses resubmissions to the latest version; PII column masks; weather events exploded to ZIP3 areas |
-| Gold | `gold_claim_features` (03), `gold_contractor_risk`, `gold_claims_kpis_monthly` (04) | Point-in-time fraud features and SIU labels per claim; contractor scorecard; monthly claims KPIs |
-
-The job runs `00_governance_setup` (mask functions) → the pipeline → `02_governance_apply` (classification tags).
+`src/data_gen/generate.py` simulates the source systems, with six known property-fraud patterns: claims soon after a policy starts or coverage is raised, hail/wind claims with no storm on record, a ring of 14 contractors, inflated amounts, late reporting, and red-flag narratives. Legitimate claims share some of these traits, so no single rule catches the fraud. The FNOL feed is messy on purpose: ~1% of claims are resubmitted and 15 records are malformed.
 
 ## Decisions & trade-offs
-- **Synthetic data, not a public dataset.** Public insurance fraud datasets are small, auto-only and lack free-text notes or weather. Synthetic data lets us plant realistic property-fraud patterns, and the hidden ground truth lets us measure *leakage*, which a real insurer can't see because undetected fraud is never labeled.
-- **Labels come from SIU outcomes, not ground truth.** The model trains on what MKR & Co. actually knows (confirmed fraud from past SIU investigations), including the bias that only referred claims get investigated. The ground truth is used **only** to evaluate the model, and it lives in a separate volume the pipeline never reads.
-- **Data generated locally, landed as files.** This mirrors how source systems drop exports into a landing zone, so Lakeflow ingests files incrementally the way it would in production.
-- **SQL for the pipeline.** Declarative SQL keeps the business logic (e.g. "a hail claim must match a storm in the same ZIP3 within 3 days") readable by claims analysts, not just engineers.
-- **Streaming tables for feeds, materialized views for snapshots.** FNOL claims arrive as new monthly files, so they're ingested incrementally. Policy, contractor and weather exports are full snapshots, so MVs recompute them. In production the policy feed would come through CDC.
-- **Drop and count bad records, rather than failing the pipeline.** One malformed FNOL record shouldn't stop the whole triage queue. Expectations drop it and the event log counts it (5 per rule in this run), so data quality is visible and can be alerted on.
-- **AUTO CDC for resubmissions.** Insurers routinely get updated FNOLs. Keying on `claim_id` and sequencing by `fnol_version` keeps the latest version, without double-counting exposure.
-- **Point-in-time features.** Contractor fraud history and prior claims only count what was known *before* the claim was reported. Otherwise the model would learn from SIU outcomes that didn't exist yet at triage time (target leakage).
-- **Govern PII at silver, minimise it.** Email, phone and address are masked by Unity Catalog column masks unless the caller is in the SIU group, so Genie users, analysts and the app see masked values with no extra code. Date of birth is reduced to birth year. In production the `mkr_siu` group would be synced from MKR & Co.'s identity provider so SIU investigators see real values. The demo runs as a user outside that group, so it shows the masked view that analysts, Genie users and the app get. PII columns carry Databricks' built-in `class.*` classification tags, and tables use the metastore's existing governed `medallion_layer` / `contains_pii` tags rather than new ad-hoc keys.
-- **Separate dev and prod targets, same schema name.** Both targets define the schema as `mkr_claims`. `dev` uses bundle development mode, which adds its default per-user prefix, so dev work lands in an isolated `dev_<user>_mkr_claims` schema with prefixed jobs and pipelines and paused schedules. `prod` deploys the unprefixed `mkr_claims` schema that the demo and the committed evidence run on. Downstream code references the schema through `${resources.schemas.mkr_claims.name}`, so the same code works in both.
+See **[docs/decisions.md](docs/decisions.md)**. The most important ones:
+- The model trains on **SIU-confirmed labels** (what the insurer actually knows), not ground truth, and is tested on a later time period.
+- **Thresholds match today's SIU capacity**, so the value comes from better referrals, not more investigators.
+- **Reason codes are deterministic and the LLM only explains.** Decisions stay auditable.
+- **PII is masked by Unity Catalog** for everyone outside the SIU group, including Genie and the app.
 
 ## How AI was used
-- Claude Code (Opus) was used as a pair-programmer for the data generator design, pipeline SQL, bundle scaffolding and debugging. _(Expanded as the build progresses.)_
-- **Data quality checks caught an AI-introduced bug.** The first pipeline run showed only 10 of the 15 malformed records dropped, and 45% of clean claims linked to a "contractor with prior fraud". The cause: the generator wrote pandas `NaN` as the JSON token `NaN` instead of `null`, so missing claim IDs and contractor IDs became the string `"NaN"`, which turned every claim without a contractor into one giant fake contractor. Fixed at the source and verified (5/5/5 drops, 3.6% vs 13.6%). Checking AI-written code against expected numbers is part of the workflow.
+- Claude Code (Opus) was a pair-programmer for design, pipeline SQL, notebooks, bundle config and debugging. Every result was checked against expected numbers before being committed.
+- **Checks caught AI-introduced bugs.** (1) The first pipeline run dropped only 10 of 15 malformed records, and 45% of clean claims showed a "contractor with prior fraud". The generator was writing pandas `NaN` as the string `"NaN"`, which merged every claim without a contractor into one fake contractor; fixed at the source (5/5/5 drops, 3.6% vs 13.6%). (2) `ai_query` with structured output failed on Claude endpoints; four endpoints were tested and the one that guarantees the schema was picked.
+- A local experiment checked that SIU-only labels still give a useful model (2.5x more fraud referred) before the training notebook was written.
 
 ## Repo layout
 | Path | Contents |
 |---|---|
 | `src/data_gen/` | Synthetic source-system generator + `land.sh` to load a target's volumes |
-| `src/pipelines/` | Lakeflow Spark Declarative Pipeline |
-| `src/notebooks/` | Governance setup/tags; ML training, scoring, Lakebase sync |
-| `src/evidence/` | `sql_evidence.py` + query files that produce the `evidence/` markdown |
+| `src/pipelines/` | Lakeflow Spark Declarative Pipeline (SQL) |
+| `src/notebooks/` | Governance, model training, serving, scoring + GenAI |
+| `src/evidence/` | `sql_evidence.py` + query files that produce `evidence/` |
 | `src/app/` | Databricks App (FastAPI + React) |
-| `resources/` | Asset Bundle resources (schema, volumes, pipeline, build job; later model, app) |
+| `resources/` | Asset Bundle resources (schema, volumes, pipeline, job) |
+| `docs/` | Decisions & trade-offs |
 | `evidence/` | Text execution evidence |
 | `deck/` | Presentation deck |

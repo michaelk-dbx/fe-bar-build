@@ -52,7 +52,7 @@ def fmt(v, col=""):
         return v.replace("|", "\\|").replace("\n", " ")
     if col.endswith("year") or "_id" in col:
         return v
-    return f"{f:,.0f}" if f.is_integer() else f"{f:,.4g}"
+    return f"{f:,.0f}" if f.is_integer() or abs(f) >= 1000 else f"{f:,.4g}"
 
 
 def main():
