@@ -97,16 +97,22 @@ SELECT feature, decision, round(univariate_auc, 3) AS auc, round(perm_importance
 FROM {catalog}.{schema}.ml_feature_analysis
 ORDER BY CASE decision WHEN 'keep' THEN 0 WHEN 'drop' THEN 1 ELSE 2 END, perm_importance DESC;
 
--- name: Distributed hyperparameter search: scale
--- note: Trials run in parallel on serverless Spark workers (mapInPandas); speedup = total compute time / wall-clock time.
-SELECT count(*) AS trials, count(*) * 3 AS model_fits, round(sum(compute_seconds)) AS compute_seconds,
-       round(max(search_wall_seconds)) AS wall_seconds, round(sum(compute_seconds) / max(search_wall_seconds), 1) AS parallel_speedup
+-- name: Distributed hyperparameter search: scale (Optuna TPE, batches on Spark)
+-- note: Each batch of trials is fitted in parallel on serverless Spark workers (mapInPandas), then told back to the TPE sampler before the next batch. fit_seconds counts model fitting only.
+SELECT count(*) AS trials, count(DISTINCT batch) AS batches, count(*) * 3 AS model_fits, round(sum(fit_seconds)) AS fit_seconds,
+       round(max(search_wall_seconds)) AS wall_seconds, round(sum(fit_seconds) / max(search_wall_seconds), 1) AS fit_time_per_wall_second
 FROM {catalog}.{schema}.ml_tuning_trials
 WHERE search_id = (SELECT max_by(search_id, searched_at) FROM {catalog}.{schema}.ml_tuning_trials);
 
--- name: Top trials vs the default configuration (trial 0)
+-- name: Best validation AP per batch (the sampler learning)
+SELECT batch + 1 AS batch, round(max(mean_ap), 3) AS best_ap_in_batch, round(avg(mean_ap), 3) AS avg_ap_in_batch
+FROM {catalog}.{schema}.ml_tuning_trials
+WHERE search_id = (SELECT max_by(search_id, searched_at) FROM {catalog}.{schema}.ml_tuning_trials)
+GROUP BY batch ORDER BY batch;
+
+-- name: Top trials vs the current defaults (trial 0)
 -- note: Mean average precision over 3 time windows (2024 H2, 2025 H1, 2025 H2); std shows how noisy ~70 labels are.
-SELECT rank, trial_id, round(mean_ap, 3) AS mean_ap, round(std_ap, 3) AS std_ap, round(mean_auc, 3) AS mean_auc,
+SELECT rank, trial_id, batch + 1 AS batch, round(mean_ap, 3) AS mean_ap, round(std_ap, 3) AS std_ap, round(mean_auc, 3) AS mean_auc,
        get_json_object(params, '$.feature_set') AS features, get_json_object(params, '$.class_weight') AS class_weight,
        round(CAST(get_json_object(params, '$.learning_rate') AS DOUBLE), 3) AS lr, get_json_object(params, '$.max_leaf_nodes') AS leaves,
        get_json_object(params, '$.min_samples_leaf') AS min_leaf, get_json_object(params, '$.l2_regularization') AS l2
