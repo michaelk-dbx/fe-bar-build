@@ -4,7 +4,7 @@ resources:
       name: mkr_claims_build
       description: >-
         End-to-end build of the MKR & Co. claims data products: governance setup -> Lakeflow pipeline ->
-        fraud model training -> serving endpoint + batch scoring with GenAI triage notes -> classification tags
+        feature EDA -> distributed hyperparameter search -> fraud model training -> serving endpoint + batch scoring with GenAI triage notes -> classification tags
       parameters:
         - name: catalog
           default: ${var.catalog}
@@ -13,24 +13,34 @@ resources:
       tasks:
         - task_key: governance_setup
           notebook_task:
-            notebook_path: ../src/notebooks/00_governance_setup.py
+            notebook_path: ../src/notebooks/01_governance.py
+            base_parameters: {phase: setup}
         - task_key: lakeflow_pipeline
           depends_on: [{task_key: governance_setup}]
           pipeline_task:
             pipeline_id: ${resources.pipelines.mkr_claims_pipeline.id}
-        - task_key: train_fraud_model
+        - task_key: feature_eda
           depends_on: [{task_key: lakeflow_pipeline}]
           notebook_task:
-            notebook_path: ../src/notebooks/03_train_fraud_model.py
+            notebook_path: ../src/notebooks/03_feature_eda.py
+        - task_key: hyperparam_search
+          depends_on: [{task_key: feature_eda}]
+          notebook_task:
+            notebook_path: ../src/notebooks/04_hyperparam_search.py
+        - task_key: train_fraud_model
+          depends_on: [{task_key: hyperparam_search}]
+          notebook_task:
+            notebook_path: ../src/notebooks/05_train_fraud_model.py
         - task_key: deploy_serving
           depends_on: [{task_key: train_fraud_model}]
           notebook_task:
-            notebook_path: ../src/notebooks/04_deploy_serving.py
+            notebook_path: ../src/notebooks/06_deploy_serving.py
         - task_key: score_claims
           depends_on: [{task_key: train_fraud_model}]
           notebook_task:
-            notebook_path: ../src/notebooks/05_score_claims.py
+            notebook_path: ../src/notebooks/07_score_claims.py
         - task_key: governance_tags
           depends_on: [{task_key: score_claims}]
           notebook_task:
-            notebook_path: ../src/notebooks/02_governance_apply.py
+            notebook_path: ../src/notebooks/01_governance.py
+            base_parameters: {phase: tags}

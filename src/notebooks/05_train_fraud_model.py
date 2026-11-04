@@ -6,6 +6,8 @@
 # MAGIC * **Split by time:** train on claims reported before 2026, test on 2026, the way the model would be used.
 # MAGIC * **Model:** gradient-boosted trees (scikit-learn `HistGradientBoostingClassifier`). It handles missing values
 # MAGIC   (e.g. no coverage increase, no storm check for water claims) and mixed numeric/categorical features natively.
+# MAGIC   Features and settings come from the best trial of `hyperparam_search` (which also chose between the EDA-selected
+# MAGIC   and full feature sets); run on its own, the notebook falls back to the defaults below.
 # MAGIC * **Registry:** Unity Catalog model `claims_fraud_model`, alias `champion`.
 # MAGIC * **Simulation-only evaluation:** at the end, the hidden ground truth measures how much fraud the model would catch
 # MAGIC   versus the legacy rules at the same SIU capacity. A real insurer can't measure that.
@@ -33,8 +35,17 @@ NUMERIC = ["days_since_policy_start", "days_since_coverage_increase", "report_la
            "policy_prior_claims_3y", "public_adjuster", "has_contractor", "dwelling_coverage", "deductible",
            "square_feet", "year_built", "roof_age_years"]
 CATEGORICAL = ["peril", "product", "state"]
-FEATURES = NUMERIC + CATEGORICAL
+params = dict(max_iter=300, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20,
+              l2_regularization=1.0, class_weight="balanced")
+best = json.loads(dbutils.jobs.taskValues.get(taskKey="hyperparam_search", key="best_config", debugValue="{}"))
+FEATURES = best.get("features", NUMERIC + CATEGORICAL)
+params.update({k: best[k] for k in params if k in best})
+params["class_weight"] = None if params["class_weight"] == "none" else params["class_weight"]
+CATEGORICAL = [c for c in CATEGORICAL if c in FEATURES]
+NUMERIC = [f for f in FEATURES if f not in CATEGORICAL]
+FEATURES = CATEGORICAL + NUMERIC  # encoder outputs categoricals first
 MODEL_NAME = f"{catalog}.{schema}.claims_fraud_model"
+print(f"tuning trial {best.get('trial_id', 'n/a (defaults)')} | {len(FEATURES)} features | {params}")
 
 
 def load_features():
@@ -55,13 +66,11 @@ print(f"train {len(train):,} claims ({int(train.label_confirmed_fraud.sum())} co
 
 # COMMAND ----------
 
-params = dict(max_iter=300, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20,
-              l2_regularization=1.0, class_weight="balanced", random_state=0)
 model = Pipeline([
     ("encode", ColumnTransformer(
         [("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1), CATEGORICAL)],
         remainder="passthrough", verbose_feature_names_out=False)),
-    ("gbt", HistGradientBoostingClassifier(categorical_features=[0, 1, 2], **params)),
+    ("gbt", HistGradientBoostingClassifier(categorical_features=list(range(len(CATEGORICAL))), random_state=0, **params)),
 ])
 
 mlflow.set_registry_uri("databricks-uc")
@@ -74,7 +83,6 @@ with mlflow.start_run(run_name="hgb_siu_labels") as run:
 
     # Real-world metrics: against the labels MKR & Co. has (SIU outcomes)
     k = int(test.siu_referred.sum())  # same SIU capacity as the legacy process
-    top_k = test.assign(p=p_test).nlargest(k, "p")
     metrics = {
         "test_auc_siu_labels": roc_auc_score(test.label_confirmed_fraud, p_test),
         "test_avg_precision_siu_labels": average_precision_score(test.label_confirmed_fraud, p_test),
@@ -85,7 +93,8 @@ with mlflow.start_run(run_name="hgb_siu_labels") as run:
                   "fast_track": float(np.quantile(p_test, 0.5)), "fast_track_max_amount": 25000.0}
 
     signature = infer_signature(test[FEATURES].head(50), model.predict_proba(test[FEATURES].head(50)))
-    mlflow.log_params({**params, "features": ",".join(FEATURES), "train_cutoff": "2026-01-01"})
+    mlflow.log_params({**params, "features": ",".join(FEATURES), "train_cutoff": "2026-01-01",
+                       "tuning_search_id": best.get("search_id", "none"), "tuning_trial_id": best.get("trial_id", "none")})
     mlflow.log_metrics(metrics)
     mlflow.log_dict(thresholds, "risk_thresholds.json")
     info = mlflow.sklearn.log_model(model, name="model", signature=signature, input_example=test[FEATURES].head(3),
@@ -102,11 +111,13 @@ with mlflow.start_run(run_name="hgb_siu_labels") as run:
         "sim_legacy_referral_precision": legacy.is_fraud.mean(), "sim_legacy_frauds_referred": int(legacy.is_fraud.sum()),
         "sim_model_referral_precision": modeled.is_fraud.mean(), "sim_model_frauds_referred": int(modeled.is_fraud.sum()),
         "sim_fast_track_share": len(fast) / len(ev), "sim_fast_track_fraud_rate": fast.is_fraud.mean(),
-        # Fraud paid out because it was never referred: legacy vs model referral list (85% SIU confirmation rate)
-        "sim_legacy_leakage_usd": ev[ev.is_fraud & (ev.siu_outcome != "confirmed_fraud")].paid_amount.sum(),
-        "sim_model_leakage_usd": ev[ev.is_fraud].paid_amount.sum()
-                                 - 0.85 * ev[ev.is_fraud & ev.claim_id.isin(modeled.claim_id)].paid_amount.sum(),
     }
+    # Fraud paid out (leakage), valued at the payable amount (claimed - deductible), because a fraud the legacy process
+    # denied would be paid if the model doesn't refer it. Legacy: its actual SIU outcomes. Model: SIU confirms 85% of
+    # the real fraud it is sent (legacy SIU confirmed 37 of the 42 real frauds it was sent in 2026, 88%).
+    fraud = ev[ev.is_fraud].assign(payable=lambda d: (d.claimed_amount - d.deductible).clip(lower=0))
+    sim["sim_legacy_leakage_usd"] = fraud[fraud.siu_outcome != "confirmed_fraud"].payable.sum()
+    sim["sim_model_leakage_usd"] = fraud.payable.sum() - 0.85 * fraud[fraud.claim_id.isin(modeled.claim_id)].payable.sum()
     sim["sim_leakage_reduction_usd"] = sim["sim_legacy_leakage_usd"] - sim["sim_model_leakage_usd"]
     mlflow.log_metrics(sim)
 

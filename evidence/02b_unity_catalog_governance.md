@@ -1,6 +1,6 @@
 # Step 2b: Unity Catalog governance: PII masks and classification tags
 
-Column masks (`mask_pii`, `mask_phone`, created by `src/notebooks/00_governance_setup.py`) are attached in the pipeline definition of `silver_policyholders`; tags are applied by `src/notebooks/02_governance_apply.py`. PII uses Databricks' built-in `class.*` classification tags; layer and PII flags use the metastore's governed `medallion_layer` / `contains_pii` tags.
+Column masks (`mask_pii`, `mask_phone`, created by `src/notebooks/01_governance.py` (phase `setup`)) are attached in the pipeline definition of `silver_policyholders`; tags are applied by `01_governance.py` (phase `tags`). PII uses Databricks' built-in `class.*` classification tags; layer and PII flags use the metastore's governed `medallion_layer` / `contains_pii` tags.
 
 Target: `serverless_stable_mkr_catalog.mkr_claims` · captured 2026-11-02 15:12 UTC on SQL warehouse `22d236430dbb5df0`
 

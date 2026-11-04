@@ -1,10 +1,10 @@
 """Run named SQL queries on a Databricks SQL warehouse and write the results as a markdown evidence file.
 
-Queries live in a .sql file as blocks that start with `-- name: <title>`; an optional
-`-- note: <text>` line right after it is printed under the title. {catalog} and {schema}
-are substituted. Auth comes from the Databricks CLI profile (DATABRICKS_CONFIG_PROFILE).
+Queries live in queries.sql, grouped by `-- step: <id>` sections. Each query starts with
+`-- name: <title>`, and an optional `-- note: <text>` line right after it is printed under the title.
+{catalog} and {schema} are substituted. Auth comes from the Databricks CLI profile (DATABRICKS_CONFIG_PROFILE).
 
-Usage: uv run python src/evidence/sql_evidence.py queries.sql --schema mkr_claims --out evidence/02_x.md --title "..."
+Usage: uv run python src/evidence/sql_evidence.py --step 02 --schema mkr_claims --out evidence/02_x.md --title "..."
 """
 
 import argparse
@@ -13,6 +13,7 @@ import re
 import subprocess
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 WAREHOUSE_ID = "22d236430dbb5df0"
 
@@ -30,6 +31,14 @@ def run(sql):
         time.sleep(3)
         r = api("get", f"/api/2.0/sql/statements/{r['statement_id']}")
     return r
+
+
+def step_section(text, step):
+    for section in re.split(r"^-- step: ", text, flags=re.M)[1:]:
+        sid, _, body = section.partition("\n")
+        if sid.strip() == step:
+            return body
+    raise SystemExit(f"step {step} not found in queries.sql")
 
 
 def parse_blocks(text):
@@ -57,7 +66,8 @@ def fmt(v, col=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("sql_file")
+    p.add_argument("--step", required=True)
+    p.add_argument("--queries", default=str(Path(__file__).with_name("queries.sql")))
     p.add_argument("--catalog", default="serverless_stable_mkr_catalog")
     p.add_argument("--schema", required=True)
     p.add_argument("--out", required=True)
@@ -68,7 +78,7 @@ def main():
     lines = [f"# {a.title}", "", a.intro, "",
              f"Target: `{a.catalog}.{a.schema}` · captured {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC "
              f"on SQL warehouse `{WAREHOUSE_ID}`", ""]
-    for title, note, sql in parse_blocks(open(a.sql_file).read()):
+    for title, note, sql in parse_blocks(step_section(open(a.queries).read(), a.step)):
         sql = sql.format(catalog=a.catalog, schema=a.schema)
         r = run(sql)
         state = r["status"]["state"]

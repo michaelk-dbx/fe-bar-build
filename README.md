@@ -1,6 +1,6 @@
 # MKR & Co. — Smart Property Claims Triage & Fraud Prevention
 
-> **Business outcome:** MKR & Co. (a fictional US homeowners insurer, 50k policies, ~$34M claims paid in 2026 YTD) lets fraud through because its Special Investigations Unit (SIU) works a list picked by static rules: only **23.6%** of referrals are real fraud. This build scores every claim as it arrives. **With the same SIU capacity, it refers 2.5x more real fraud (106 vs 42 frauds, 59.6% precision), cutting fraud paid out by $1.83M in Jan–Oct 2026** (≈$2.2M/yr, ~5% of claims paid). It also **fast-tracks 45% of claims** (fraud rate 1.2%, ≤ $25k) so honest policyholders get paid faster. Every referral comes with plain-English reasons and an AI triage note.
+> **Business outcome:** MKR & Co. (a fictional US homeowners insurer, 50k policies, ~$34M claims paid in 2026 YTD) lets fraud through because its Special Investigations Unit (SIU) works a list picked by static rules: only **23.6%** of referrals are real fraud. This build scores every claim as it arrives. **With the same SIU capacity, it refers 2.6x more real fraud (109 vs 42 frauds, 61.2% precision), cutting fraud paid out by $1.42M in Jan–Oct 2026** (≈$1.7M/yr, ~4% of claims paid). It also **fast-tracks 45% of claims** (fraud rate 0.8%, ≤ $25k) so honest policyholders get paid faster. Every referral comes with plain-English reasons and an AI triage note.
 >
 > _Figures come from the 2026 test period of the [model evaluation](evidence/03_fraud_model_and_genai.md). The data is synthetic, so the hidden ground truth makes leakage measurable._
 
@@ -15,7 +15,7 @@ Source-system exports → **Lakeflow** (bronze/silver/gold) → **Unity Catalog*
 |---|---|---|
 | 1. Source data | Synthetic policy admin, contractors, weather, FNOL claims and SIU outcomes landed in a UC volume | ✅ [01](evidence/01_landing_zone.md) |
 | 2. Lakeflow + UC | SQL declarative pipeline: Auto Loader, expectations, AUTO CDC dedupe, point-in-time features; PII masks and classification tags | ✅ [02](evidence/02_lakeflow_pipeline.md) · [02b](evidence/02b_unity_catalog_governance.md) |
-| 3. ML + GenAI | Gradient-boosted fraud model in MLflow/UC, serving endpoint, risk tiers + reason codes, `ai_query` triage notes | ✅ [03](evidence/03_fraud_model_and_genai.md) |
+| 3. ML + GenAI | Feature EDA, distributed hyperparameter search, gradient-boosted fraud model in MLflow/UC, serving endpoint, risk tiers + reason codes, `ai_query` triage notes | ✅ [03a](evidence/03a_feature_eda_and_tuning.md), [03](evidence/03_fraud_model_and_genai.md) |
 | 4. Lakebase | Triage queue served from Postgres; adjuster decisions written back | ⏳ |
 | 5. Genie | Natural-language claims analytics over the gold tables | ⏳ |
 | 6. App | Adjuster workbench: queue, claim detail, decisions, Genie | ⏳ |

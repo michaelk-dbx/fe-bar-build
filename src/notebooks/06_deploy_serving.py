@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Serve the champion fraud model for real-time scoring
 # MAGIC The adjuster app scores new claims as they're entered (FNOL intake) through this endpoint.
-# MAGIC Batch scoring of the claim queue (`05_score_claims`) loads the same UC model version directly.
+# MAGIC Batch scoring of the claim queue (`07_score_claims`) loads the same UC model version directly.
 # MAGIC Scale-to-zero keeps a demo endpoint cheap; production would keep a minimum of 1 for latency.
 
 # COMMAND ----------
