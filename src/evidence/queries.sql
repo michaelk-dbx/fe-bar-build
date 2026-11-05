@@ -158,3 +158,21 @@ FROM {catalog}.{schema}.gold_claim_ai_triage GROUP BY llm_endpoint;
 SELECT claim_id, risk_tier, risk_score, triage.summary, array_join(triage.narrative_red_flags, ' | ') AS red_flags, triage.recommended_next_step
 FROM {catalog}.{schema}.gold_claim_ai_triage ORDER BY risk_score DESC, claim_id LIMIT 1;
 
+-- step: 04
+-- name: Lakebase checks from the build job (lakebase_checks, latest run)
+-- note: Row parity of the synced tables, adjuster-queue latency measured against Postgres, and the decision round trip through Lakebase CDF.
+SELECT check, value, detail, passed FROM {catalog}.{schema}.lakebase_checks
+WHERE checked_at = (SELECT max(checked_at) FROM {catalog}.{schema}.lakebase_checks) ORDER BY check;
+
+-- name: The queue read back from Lakebase through Unity Catalog (synced table)
+-- note: claim_scores_synced is the Postgres table, exposed in UC; open claims by tier as the app sees them.
+SELECT risk_tier, count(*) AS open_claims, round(avg(risk_score)) AS avg_risk_score, round(sum(claimed_amount)) AS claimed_usd
+FROM {catalog}.{schema}.claim_scores_synced WHERE claim_status = 'open' GROUP BY ALL ORDER BY avg_risk_score DESC;
+
+-- name: Decision write-back: Postgres change history landed in UC Delta (Lakebase CDF)
+SELECT _pg_change_type, _timestamp, claim_id, decision, adjuster, model_risk_tier, decided_at
+FROM {catalog}.{schema}.lb_claim_decisions_history ORDER BY _pg_lsn DESC LIMIT 6;
+
+-- name: Latest decision per claim (gold_adjuster_decisions, for Genie, SIU reporting and future labels)
+SELECT claim_id, decision, adjuster, model_risk_tier, model_risk_score, decided_at, is_smoke_test
+FROM {catalog}.{schema}.gold_adjuster_decisions ORDER BY decided_at DESC LIMIT 5;

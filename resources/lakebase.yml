@@ -1,0 +1,38 @@
+# Lakebase (Autoscaling Postgres): the operational store behind the adjuster app.
+# UC -> Postgres: snapshot synced tables for the scored queue and AI triage notes (read-only in Postgres).
+# Postgres -> UC: adjuster decisions live in the native table app.claim_decisions; Lakebase CDF replicates
+# schema `app` back to UC as Delta (set up by 08_lakebase.py, since CDF configs aren't a bundle resource yet).
+resources:
+  postgres_projects:
+    claims_db:
+      project_id: ${var.lakebase_project}
+      display_name: MKR & Co. claims (${bundle.target})
+      pg_version: 17
+      default_endpoint_settings:
+        autoscaling_limit_min_cu: 0.5
+        autoscaling_limit_max_cu: 2
+        suspend_timeout_duration: 300s
+
+  postgres_synced_tables:
+    claim_scores:
+      synced_table_id: ${var.catalog}.${resources.schemas.mkr_claims.name}.claim_scores_synced
+      source_table_full_name: ${var.catalog}.${resources.schemas.mkr_claims.name}.gold_claim_scores
+      branch: ${resources.postgres_projects.claims_db.name}/branches/production
+      postgres_database: claims
+      create_database_objects_if_missing: true
+      primary_key_columns: [claim_id]
+      scheduling_policy: SNAPSHOT
+      new_pipeline_spec:
+        storage_catalog: ${var.catalog}
+        storage_schema: ${resources.schemas.mkr_claims.name}
+    claim_ai_triage:
+      synced_table_id: ${var.catalog}.${resources.schemas.mkr_claims.name}.claim_ai_triage_synced
+      source_table_full_name: ${var.catalog}.${resources.schemas.mkr_claims.name}.gold_claim_ai_triage
+      branch: ${resources.postgres_projects.claims_db.name}/branches/production
+      postgres_database: claims
+      create_database_objects_if_missing: true
+      primary_key_columns: [claim_id]
+      scheduling_policy: SNAPSHOT
+      new_pipeline_spec:
+        storage_catalog: ${var.catalog}
+        storage_schema: ${resources.schemas.mkr_claims.name}

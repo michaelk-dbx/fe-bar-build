@@ -4,7 +4,7 @@ resources:
       name: mkr_claims_build
       description: >-
         End-to-end build of the MKR & Co. claims data products: governance setup -> Lakeflow pipeline ->
-        feature EDA -> distributed hyperparameter search -> fraud model training -> serving endpoint + batch scoring with GenAI triage notes -> classification tags
+        feature EDA -> distributed hyperparameter search -> fraud model training -> serving endpoint + batch scoring with GenAI triage notes -> Lakebase sync + decision write-back -> classification tags
       parameters:
         - name: catalog
           default: ${var.catalog}
@@ -39,8 +39,21 @@ resources:
           depends_on: [{task_key: train_fraud_model}]
           notebook_task:
             notebook_path: ../src/notebooks/07_score_claims.py
-        - task_key: governance_tags
+        - task_key: sync_claim_scores
           depends_on: [{task_key: score_claims}]
+          pipeline_task:
+            pipeline_id: ${resources.postgres_synced_tables.claim_scores.status.pipeline_id}
+        - task_key: sync_claim_ai_triage
+          depends_on: [{task_key: score_claims}]
+          pipeline_task:
+            pipeline_id: ${resources.postgres_synced_tables.claim_ai_triage.status.pipeline_id}
+        - task_key: lakebase
+          depends_on: [{task_key: sync_claim_scores}, {task_key: sync_claim_ai_triage}]
+          notebook_task:
+            notebook_path: ../src/notebooks/08_lakebase.py
+            base_parameters: {project: "${var.lakebase_project}"}
+        - task_key: governance_tags
+          depends_on: [{task_key: lakebase}]
           notebook_task:
             notebook_path: ../src/notebooks/01_governance.py
             base_parameters: {phase: tags}

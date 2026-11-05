@@ -14,6 +14,9 @@ variables:
   warehouse_id:
     description: SQL warehouse for Genie / dashboards
     default: 22d236430dbb5df0
+  lakebase_project:
+    description: Lakebase Autoscaling project id (one per target)
+    default: mkr-claims
 
 targets:
   dev:
@@ -21,6 +24,8 @@ targets:
     # jobs/pipelines get [dev <user>], schedules are paused and pipelines run in development mode.
     mode: development
     default: true
+    variables:
+      lakebase_project: mkr-claims-dev
     workspace:
       host: https://fevm-serverless-stable-mkr.cloud.databricks.com
 

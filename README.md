@@ -16,11 +16,11 @@ Source-system exports → **Lakeflow** (bronze/silver/gold) → **Unity Catalog*
 | 1. Source data | Synthetic policy admin, contractors, weather, FNOL claims and SIU outcomes landed in a UC volume | ✅ [01](evidence/01_landing_zone.md) |
 | 2. Lakeflow + UC | SQL declarative pipeline: Auto Loader, expectations, AUTO CDC dedupe, point-in-time features; PII masks and classification tags | ✅ [02](evidence/02_lakeflow_pipeline.md) · [02b](evidence/02b_unity_catalog_governance.md) |
 | 3. ML + GenAI | Feature EDA, distributed hyperparameter search, gradient-boosted fraud model in MLflow/UC, serving endpoint, risk tiers + reason codes, `ai_query` triage notes | ✅ [03a](evidence/03a_feature_eda_and_tuning.md), [03](evidence/03_fraud_model_and_genai.md) |
-| 4. Lakebase | Triage queue served from Postgres; adjuster decisions written back | ⏳ |
+| 4. Lakebase | Scores + AI notes synced UC → Postgres for the app queue (ms reads); adjuster decisions written in Postgres flow back to UC Delta via Lakebase CDF | ✅ [04](evidence/04_lakebase.md) |
 | 5. Genie | Natural-language claims analytics over the gold tables | ⏳ |
 | 6. App | Adjuster workbench: queue, claim detail, decisions, Genie | ⏳ |
 
-Everything is deployed with one Asset Bundle and runs as one job, `mkr_claims_build`: `governance_setup` → `lakeflow_pipeline` → `train_fraud_model` → (`deploy_serving`, `score_claims`) → `governance_tags`.
+Everything is deployed with one Asset Bundle and runs as one job, `mkr_claims_build`: `governance_setup` → `lakeflow_pipeline` → `feature_eda` → `hyperparam_search` → `train_fraud_model` → (`deploy_serving`, `score_claims` → Lakebase syncs → `lakebase` → `governance_tags`). Lakebase is declared in the same bundle (`resources/lakebase.yml`).
 
 ## Key tables (`serverless_stable_mkr_catalog.mkr_claims`)
 | Table | Grain | Used by |
